@@ -1,0 +1,108 @@
+name: Windows build and release
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    name: Build and test Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache Zig toolchain and compiler cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .build-cache/tools
+            .build-cache/zig-global
+            .build-cache/zig-local
+          key: ${{ runner.os }}-${{ runner.arch }}-zig-${{ hashFiles('build.ps1') }}
+
+      - name: Build and run native self-tests
+        run: ./build.ps1 -Test
+
+      - name: Check native executable dependencies
+        run: python scripts/inspect-native.py dist/OnAirClock.exe
+
+      - name: Check single-file portability
+        run: ./scripts/Test-NativePortable.ps1
+
+      - name: Check cleanup retries
+        run: python scripts/test-cleanup-retry.py
+
+      - name: Generate executable checksum
+        run: |
+          $hash = (Get-FileHash -LiteralPath dist/OnAirClock.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  OnAirClock.exe`n" | Set-Content -LiteralPath dist/SHA256SUMS.txt -Encoding ascii -NoNewline
+
+      - name: Upload tested executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: on-air-clock-windows-x64
+          path: |
+            dist/OnAirClock.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested executable
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: on-air-clock-windows-x64
+          path: release
+
+      - name: Verify and publish release assets
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected a version tag such as v0.1.0 or v0.2.0-beta.1."
+            exit 1
+          fi
+          sha256sum --check SHA256SUMS.txt
+          prerelease=false
+          if [[ "$RELEASE_TAG" == *-* ]]; then prerelease=true; fi
+          if existing=$(gh release view "$RELEASE_TAG" --json isDraft 2>/dev/null); then
+            if [[ $(jq -r .isDraft <<< "$existing") != true ]]; then
+              echo "This release is already published; refusing to replace its assets."
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "ON AIR Clock $RELEASE_TAG" --generate-notes --prerelease="$prerelease" \
+              --notes 'Windows 10/11 x64. Download OnAirClock.exe and run it; no installer or .NET runtime is required. SHA256SUMS.txt contains its SHA-256 checksum. The executable is unsigned.'
+          fi
+          gh release upload "$RELEASE_TAG" OnAirClock.exe SHA256SUMS.txt --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

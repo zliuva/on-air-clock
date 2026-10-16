@@ -2,7 +2,9 @@
 
 A native C++ Windows tray app that shows camera and microphone activity on an AWTRIX NG clock.
 
-**Copy `dist\OnAirClock.exe` to another Windows 10/11 x64 PC and run it.** The EXE uses Windows system DLLs and a statically linked C++ standard library. There is no .NET dependency, runtime installer, self-extraction, browser extension, or third-party DLL to copy.
+[![Windows build](https://github.com/zliuva/on-air-clock/actions/workflows/windows.yml/badge.svg)](https://github.com/zliuva/on-air-clock/actions/workflows/windows.yml)
+
+**Download `OnAirClock.exe` from the [latest release](https://github.com/zliuva/on-air-clock/releases/latest) and run it on Windows 10/11 x64.** The EXE uses Windows system DLLs and a statically linked C++ standard library. There is no .NET dependency, runtime installer, self-extraction, browser extension, or third-party DLL to copy. Each release includes `SHA256SUMS.txt` to verify the download.
 
 On a new PC, Settings opens on first launch. Enter the clock URL, username and password, then Save. The PC must be able to reach the clock on the network. Credentials from another Windows account are not portable; enter them again on the new PC.
 
@@ -41,6 +43,17 @@ Normal Quit, Windows shutdown/logoff, and sleep attempt to dismiss the held aler
 This builds `dist\OnAirClock.exe`. If needed, the script downloads the official portable Zig 0.17.0 C++ toolchain from ziglang.org into `.build-cache` and verifies its pinned SHA256. No compiler or SDK is needed on the destination PC. The C++ code uses Win32, COM, WinHTTP and DPAPI directly.
 
 The native self-tests cover held alerts without renewals, state transitions, retries, cleanup after failed requests, manual dismissal, pixel layout, settings validation and encrypted credentials.
+
+GitHub Actions runs the build, native self-tests, dependency inspection, single-file portability test and cleanup retry fixture on every branch push and pull request. The Actions page also supports manual runs. Successful builds provide a Windows x64 artifact containing only the EXE and its checksum, retained for 14 days.
+
+To publish a release, tag the intended commit and push the tag:
+
+```powershell
+git tag -a v0.2.0 -m "ON AIR Clock v0.2.0"
+git push origin v0.2.0
+```
+
+Version tags run the same checks, then publish the tested `OnAirClock.exe` and `SHA256SUMS.txt` as release assets. Tags with a suffix, such as `v0.2.0-beta.1`, create prereleases. A release stays in draft until both assets have uploaded; an already published release is never overwritten. Builds run on clean GitHub-hosted runners and do not use local settings, credentials or clock access. The EXE is unsigned. macOS builds will be added when the native macOS implementation is available.
 
 From PowerShell, diagnostics can be run with output redirected to a file (the app is a GUI EXE):
 
